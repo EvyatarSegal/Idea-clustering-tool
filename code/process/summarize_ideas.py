@@ -14,28 +14,40 @@ from tqdm import tqdm
 
 LM_STUDIO_URL = "http://localhost:1234/v1"
 
-def summarize(text, model_name):
-    prompt = f"""Summarize the following business idea in one short sentence (max 20 words). Keep only the core concept, remove marketing fluff, brand names, and extra details.
-
-Idea: {text}
-
-Summary:"""
+def summarize(text, model_name, max_retries=1):
+    # Clean and truncate
+    text = text.strip().replace('\n', ' ').replace('\r', '')
+    if len(text) > 1500:
+        text = text[:1500]  # truncate to avoid context overflow
+    
+    prompt = f"Summarize in one short sentence (max 20 words): {text}"
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens": 60,
-        "stream": False
+        "temperature": 0.2,
+        "max_tokens": 60
     }
-    try:
-        response = requests.post(f"{LM_STUDIO_URL}/chat/completions", json=payload)
-        response.raise_for_status()
-        summary = response.json()["choices"][0]["message"]["content"].strip()
-        return summary
-    except Exception as e:
-        print(f"Error: {e}")
-        return text
-
+    
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(f"{LM_STUDIO_URL}/chat/completions", json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"].strip()
+                if content:
+                    return content
+                else:
+                    print(f"Attempt {attempt+1}: empty content for text starting: {text[:50]}...")
+            else:
+                print(f"HTTP {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            print(f"Attempt {attempt+1} error: {e}")
+        time.sleep(1)
+    
+    # Fallback: return a truncated version of the original
+    fallback = text[:80] + "..." if len(text) > 80 else text
+    print(f"Using fallback summary: {fallback}")
+    return fallback
 def main():
     # Default paths relative to script location (code/process/)
     script_dir = os.path.dirname(os.path.abspath(__file__))
